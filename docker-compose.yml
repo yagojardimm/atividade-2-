@@ -1,0 +1,101 @@
+services:
+  # ===================================================
+  # MongoDB — Banco NoSQL (Carros, Motos, Marcas de Roupa)
+  # ===================================================
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_INITDB_ROOT_USERNAME:-admin}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD:-admin_password}
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--username", "${MONGO_INITDB_ROOT_USERNAME:-admin}", "--password", "${MONGO_INITDB_ROOT_PASSWORD:-admin_password}", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ===================================================
+  # PostgreSQL — Banco SQL Relacional (Usuários)
+  # ===================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres_password}
+      - POSTGRES_DB=${POSTGRES_DB:-api_dual_db}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-api_dual_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ===================================================
+  # API Node.js + Express
+  # ===================================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: api-node
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=${NODE_ENV:-production}
+      - JWT_SECRET=${JWT_SECRET:-chave_secreta_jwt_desenvolvimento}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-24h}
+      - MONGODB_URI=mongodb://${MONGO_INITDB_ROOT_USERNAME:-admin}:${MONGO_INITDB_ROOT_PASSWORD:-admin_password}@mongodb:27017/${POSTGRES_DB:-api_dual_db}?authSource=admin
+      - POSTGRES_URI=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_password}@postgres:5432/${POSTGRES_DB:-api_dual_db}
+    networks:
+      - app-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # ===================================================
+  # Testes de Integração (executar com: docker-compose run tests)
+  # ===================================================
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: api-tests
+    environment:
+      - NODE_ENV=test
+      - JWT_SECRET=chave_secreta_testes
+      - JWT_EXPIRES_IN=1h
+      - MONGODB_URI=mongodb://${MONGO_INITDB_ROOT_USERNAME:-admin}:${MONGO_INITDB_ROOT_PASSWORD:-admin_password}@mongodb:27017/api_dual_db_test?authSource=admin
+      - POSTGRES_URI=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_password}@postgres:5432/api_dual_db_test
+    networks:
+      - app-network
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    profiles:
+      - test
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  mongo-data:
+  postgres-data:
